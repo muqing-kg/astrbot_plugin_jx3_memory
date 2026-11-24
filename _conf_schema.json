@@ -1,4 +1,10 @@
 {
+  "proxy": {
+    "description": "抓公告用的代理",
+    "type": "string",
+    "default": "",
+    "hint": "留空直连。形如 http://127.0.0.1:7890。"
+  },
   "db_path": {
     "description": "记忆库文件路径",
     "type": "string",

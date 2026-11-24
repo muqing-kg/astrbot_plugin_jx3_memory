@@ -56,13 +56,18 @@ class Store:
     """词表与条目摘要常驻内存，查库只发生在启动时。"""
 
     def __init__(self, db_path: str | Path) -> None:
-        path = Path(db_path)
-        if not path.is_file():
-            raise FileNotFoundError(path)
-        self.db = sqlite3.connect(str(path), check_same_thread=False)
-        self.db.row_factory = sqlite3.Row
+        self.path = Path(db_path)
         self.matcher = Matcher()
         self._brief: dict[str, str] = {}
+        self.reload()
+
+    def reload(self) -> None:
+        """重装词表。公告同步后调用，换掉整个 Matcher 而不是往里加。"""
+        if not self.path.is_file():
+            raise FileNotFoundError(self.path)
+        self.db = sqlite3.connect(str(self.path), check_same_thread=False)
+        self.db.row_factory = sqlite3.Row
+        self.matcher = Matcher()
         self._load()
 
     def _load(self) -> None:

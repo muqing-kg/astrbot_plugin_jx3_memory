@@ -5,7 +5,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -16,9 +18,11 @@ from astrbot.api.star import Context, Star
 try:
     from .core.inject import render
     from .core.store import Store
+    from .core.sync import sync as sync_news
 except ImportError:  # 顶层导入（自检、直接运行）
     from core.inject import render
     from core.store import Store
+    from core.sync import sync as sync_news
 
 try:
     # 4.29 起 TextPart 才有 mark_as_temp：只对本次请求生效，不写进对话历史。
@@ -31,6 +35,7 @@ logger = logging.getLogger("astrbot.plugin.jx3_memory")
 PLUGIN_NAME = "astrbot_plugin_jx3_memory"
 DB_NAME = "memory.sqlite3"
 MAX_SESSIONS = 500
+SYNC_HOUR = 3
 
 
 def _as_int(config: Any, key: str, default: int) -> int:
@@ -38,6 +43,15 @@ def _as_int(config: Any, key: str, default: int) -> int:
         return int(config.get(key, default))
     except (TypeError, ValueError):
         return default
+
+
+def _seconds_until(hour: int) -> float:
+    """距下一个整点的秒数；已经过了就算明天。"""
+    now = datetime.now()
+    target = now.replace(hour=hour, minute=0, second=0, microsecond=0)
+    if target <= now:
+        target += timedelta(days=1)
+    return (target - now).total_seconds()
 
 
 def _text_of(ctx: Any) -> str:
@@ -63,16 +77,42 @@ class JX3MemoryPlugin(Star):
         self.max_items = max(1, _as_int(self.config, "max_items", 5))
         self.max_chars = max(200, _as_int(self.config, "max_chars", 1200))
         self.recent = max(0, _as_int(self.config, "recent_messages", 3))
+        self.proxy = str(self.config.get("proxy") or "").strip()
         self._seen: dict[str, set[str]] = {}
 
         configured = str(self.config.get("db_path") or "").strip()
-        path = Path(configured) if configured else Path(__file__).parent / "data" / DB_NAME
+        self.db_path = Path(configured) if configured else Path(__file__).parent / "data" / DB_NAME
         self.store: Store | None = None
         try:
-            self.store = Store(path)
-            logger.info("jx3 memory: %s words loaded from %s", len(self.store), path)
+            self.store = Store(self.db_path)
+            logger.info("jx3 memory: %s words loaded from %s", len(self.store), self.db_path)
         except Exception as exc:  # noqa: BLE001 - 库缺失不该让整个插件加载失败
-            logger.warning("jx3 memory: 记忆库不可用（%s），本轮起不注入: %s", path, exc)
+            logger.warning("jx3 memory: 记忆库不可用（%s），本轮起不注入: %s", self.db_path, exc)
+
+        self._sync_task: asyncio.Task | None = None
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:  # 没有事件循环时只丢掉定时，注入照常
+            logger.warning("jx3 memory: 无事件循环，公告定时同步未启动")
+        else:
+            self._sync_task = asyncio.create_task(self._daily_sync())
+
+    async def _daily_sync(self) -> None:
+        """每天 SYNC_HOUR 点拉一次最新公告；库里的公告按 id 去重、正文变了才更新。"""
+        while True:
+            await asyncio.sleep(_seconds_until(SYNC_HOUR))
+            try:
+                added, updated = await asyncio.to_thread(sync_news, self.db_path, self.proxy)
+                logger.info("jx3 memory: 公告同步完成，新增 %s 条、更新 %s 条", added, updated)
+                if (added or updated) and self.store is not None:
+                    await asyncio.to_thread(self.store.reload)
+            except Exception as exc:  # noqa: BLE001 - 同步失败不该拖垮插件
+                logger.warning("jx3 memory: 公告同步失败: %s", exc)
+
+    async def terminate(self) -> None:
+        if self._sync_task is not None:
+            self._sync_task.cancel()
+            self._sync_task = None
 
     @filter.on_llm_request()
     async def inject_memory(self, event: AstrMessageEvent, req: ProviderRequest) -> None:
