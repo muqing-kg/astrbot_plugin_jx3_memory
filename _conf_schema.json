@@ -1,0 +1,25 @@
+{
+  "db_path": {
+    "description": "记忆库文件路径",
+    "type": "string",
+    "default": "",
+    "hint": "留空则用插件目录下的 data/memory.sqlite3。"
+  },
+  "max_items": {
+    "description": "单轮最多注入几条",
+    "type": "int",
+    "default": 5,
+    "hint": "命中的条目越多越容易带偏话题，一般 3-5 条足够。"
+  },
+  "max_chars": {
+    "description": "单轮注入字数上限",
+    "type": "int",
+    "default": 1200
+  },
+  "recent_messages": {
+    "description": "匹配时一并参考最近几条历史消息",
+    "type": "int",
+    "default": 3,
+    "hint": "让「这个呢」「那个怎么打」这种短句也能定位到上一轮提过的东西。设为 0 则只看当前消息。"
+  }
+}

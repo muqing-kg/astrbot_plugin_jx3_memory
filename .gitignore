@@ -1,0 +1,7 @@
+.memory/
+work/
+__pycache__/
+*.pyc
+.venv/
+data/*
+!data/memory.sqlite3
