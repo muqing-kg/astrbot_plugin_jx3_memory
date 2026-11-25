@@ -30,8 +30,10 @@ _DK = {
 }
 _AK = {"item": "item", "skill": "skill", "xf": "talent"}
 
-# 只有这些类目在精确查不到正文时按标题模糊兜底：副本和首领的打法写在攻略标题里
-_FUZZY_KINDS = frozenset({"dungeon", "boss", "quest", "serendipity", "achievement"})
+# 只有这些类目在精确查不到正文时按标题模糊兜底。
+# 副本和首领不在里面：攻略库里凡是标题带副本名的帖子，内容都是成就做法
+# （「黑煞烈阳！25人普通龙渊泽」讲的是成就怎么拿），拿来当副本攻略就是答非所问。
+_FUZZY_KINDS = frozenset({"quest", "serendipity", "achievement"})
 
 _PUNCT = re.compile(r"[！!·・—－\-：:、，,（）()\[\]【】]+")
 
@@ -224,7 +226,8 @@ class Store:
 def _self_check() -> None:
     import tempfile
 
-    with tempfile.TemporaryDirectory() as tmp:
+    # Windows 上句柄没放干净时删不掉临时目录，清理失败不该让自检看起来失败
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
         path = Path(tmp) / "t.sqlite3"
         db = sqlite3.connect(path)
         db.executescript(
@@ -276,10 +279,10 @@ def _self_check() -> None:
         # 摘要按句读截短，不留半句
         long_brief = s.search(["长句"])[0][1]
         assert len(long_brief) <= BRIEF_CHARS + 1 and long_brief[-1] in "。…"
-        # 名字撞车按类目取正文：副本「龙渊泽」不该拿到同名任务的剧情，
-        # 精确查不到时退一步拿标题里带它的攻略
-        got = s.detail("龙渊泽")
-        assert got is not None and got[1].startswith("副本打法"), got
+        # 名字撞车按类目取正文：副本「龙渊泽」不该拿到同名任务的剧情。
+        # 攻略库里标题带副本名的帖子讲的都是成就做法，所以副本干脆不给正文，
+        # 只留摘要「巴蜀风云副本，2 个首领」——给错的比不给糟。
+        assert s.detail("龙渊泽") is None
         # 类目对得上就照常取
         assert s.detail("玄晶")[1].startswith("玩家写的攻略")
         # 心法不走模糊兜底：同名的《离经易道·秘卷》是秘籍，给了比不给糟
