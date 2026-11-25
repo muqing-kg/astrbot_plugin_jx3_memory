@@ -13,12 +13,17 @@ _ZW = re.compile(r"[\u200b-\u200f\u2060\ufeff]")
 # 玩家写的攻略爱用横线、菱形分隔段落，四百字里能有半屏是分隔线
 _RULE = re.compile(r"[-=_*~—－◆※●▪▼★☆]{2,}")
 
-HEAD = (
-    "（下面这些是剑网3 里的东西，给你听懂对方在说什么用的。"
-    "回复时不必提到它们，也不要照搬里面的说法；"
-    "对方没问就别主动讲，问到了别说错。没列到的说明你不清楚，别猜。"
+GUIDE = (
+    "[剑三·长期有效] 你玩了很多年剑网3。聊到剑三的东西按你知道的说，别猜、别编；"
+    "不清楚就说不清楚。不用主动科普，别人问了再讲。"
 )
-TAIL = "）"
+
+HEAD = (
+    "[剑三资料·仅用于理解，禁止原样输出] 对方提到的这些你本来就懂，"
+    "用得上就用自己的话说一句，别照抄、别念条目、别说「我查了一下」；"
+    "对方没问含义就别主动解释。"
+)
+TAIL = ""
 
 MAX_ITEMS = 5
 MAX_CHARS = 1200
@@ -79,7 +84,7 @@ def _self_check() -> None:
     assert render([]) == ""
 
     one = render([("大铁", "玄晶的俗称")])
-    assert one.startswith(HEAD) and one.endswith(TAIL)
+    assert one.startswith(HEAD) and one.endswith("玄晶的俗称")
     assert "大铁：玄晶的俗称" in one
     # 整块只有一行：列表排版会被模型学去，回话也分行
     assert "\n" not in one

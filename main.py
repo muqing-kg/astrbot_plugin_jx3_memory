@@ -16,11 +16,11 @@ from astrbot.api.provider import ProviderRequest
 from astrbot.api.star import Context, Star
 
 try:
-    from .core.inject import render
+    from .core.inject import GUIDE, render
     from .core.store import Store
     from .core.sync import sync as sync_news
 except ImportError:  # 顶层导入（自检、直接运行）
-    from core.inject import render
+    from core.inject import GUIDE, render
     from core.store import Store
     from core.sync import sync as sync_news
 
@@ -143,6 +143,10 @@ class JX3MemoryPlugin(Star):
 
         # 注入只是锦上添花，出了任何差错都不能连累这条消息本身的回复
         try:
+            # 每轮都告诉她「你懂剑三」。命中才给词条的话，她只有被问到才知道自己懂，
+            # 平时插话仍是空着手——知道不等于要说出来，但得先知道。
+            parts.append(TextPart(text=GUIDE).mark_as_temp())
+
             texts = [req.prompt or ""]
             for ctx in (req.contexts or [])[-self.recent :] if self.recent else []:
                 text = _text_of(ctx)
