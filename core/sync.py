@@ -82,11 +82,16 @@ def _put_entry(con: sqlite3.Connection, title: str, body: str) -> None:
 
 def sync(db_path: str | Path, proxy: str = "", limit: int = LIMIT, api: str = API) -> tuple[int, int]:
     """返回 (新增, 更新)。正文没变的条目只刷新抓取时间，不动检索表。"""
+    db = Path(db_path)
+    # sqlite3.connect 会把不存在的路径建成空库，残库里没有 entry 表，
+    # 后面写检索表才报错，看着像公告同步坏了，其实是主库路径配错了
+    if not db.is_file():
+        raise FileNotFoundError(db)
     items = fetch(proxy, limit, api)
     now = datetime.now().astimezone().isoformat(timespec="seconds")
     added = updated = 0
 
-    con = sqlite3.connect(str(db_path))
+    con = sqlite3.connect(str(db))
     try:
         con.execute(
             """

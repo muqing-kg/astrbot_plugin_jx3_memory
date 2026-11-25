@@ -134,27 +134,30 @@ class JX3MemoryPlugin(Star):
         if parts is None:
             return
 
-        texts = [req.prompt or ""]
-        for ctx in (req.contexts or [])[-self.recent :] if self.recent else []:
-            text = _text_of(ctx)
-            if text:
-                texts.append(text)
+        # 注入只是锦上添花，出了任何差错都不能连累这条消息本身的回复
+        try:
+            texts = [req.prompt or ""]
+            for ctx in (req.contexts or [])[-self.recent :] if self.recent else []:
+                text = _text_of(ctx)
+                if text:
+                    texts.append(text)
 
-        hits = self.store.search(texts, limit=self.max_items)
-        if not hits:
-            return
+            hits = self.store.search(texts, limit=self.max_items)
+            if not hits:
+                return
 
-        detail = None
-        if any(w in (req.prompt or "") for w in ASK_WORDS):
-            for name, _ in hits:
-                got = self.store.detail(name)
-                if got:
-                    detail = (name, got[1])
-                    break
+            detail = None
+            if any(w in (req.prompt or "") for w in ASK_WORDS):
+                for name, _ in hits:
+                    got = self.store.detail(name)
+                    if got:
+                        detail = (name, got[1])
+                        break
 
-        block = render(
-            hits, max_items=self.max_items, max_chars=self.max_chars, detail=detail
-        )
-        if not block:
-            return
-        parts.append(TextPart(text=block).mark_as_temp())
+            block = render(
+                hits, max_items=self.max_items, max_chars=self.max_chars, detail=detail
+            )
+            if block:
+                parts.append(TextPart(text=block).mark_as_temp())
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("jx3 memory: 本轮注入失败，跳过: %s", exc)

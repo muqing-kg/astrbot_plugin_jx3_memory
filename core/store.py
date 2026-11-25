@@ -188,6 +188,17 @@ class Store:
                 ).fetchone()
                 if row and len(row[0]) >= MIN_DETAIL:
                     return (ak, row[0])
+            # 副本、地图这类自己没有正文——打法写在别人的攻略标题里（「龙渊泽·25人挑战攻略」）。
+            # 精确查不到就按标题包含再找一次，否则问「XX 怎么打」只能答一句摘要。
+            # 标题以它开头的优先，其次才看正文长短，免得挑中最啰嗦的那篇。
+            if len(name) >= 3:
+                row = self._detail.execute(
+                    "SELECT body FROM detail WHERE kind='post' AND name LIKE ?"
+                    " ORDER BY (name LIKE ?) DESC, length(body) DESC LIMIT 1",
+                    (f"%{name}%", f"{name}%"),
+                ).fetchone()
+                if row and len(row[0]) >= MIN_DETAIL:
+                    return ("post", row[0])
         except sqlite3.Error:
             return None
         return None
@@ -233,6 +244,7 @@ def _self_check() -> None:
             """
             CREATE TABLE detail (kind TEXT, name TEXT, body TEXT, meta TEXT, PRIMARY KEY (kind, name));
             INSERT INTO detail VALUES ('quest','龙渊泽','任务正文：一段与副本无关的背景故事，够长够长够长。','');
+            INSERT INTO detail VALUES ('post','龙渊泽·25人挑战攻略','副本打法正文：老一门口集合，老二躲红圈，够二十个字了。','');
             INSERT INTO detail VALUES ('post','玄晶','玩家写的攻略正文，讲玄晶怎么来，够二十个字了。','');
             """
         )
@@ -256,8 +268,10 @@ def _self_check() -> None:
         # 摘要按句读截短，不留半句
         long_brief = s.search(["长句"])[0][1]
         assert len(long_brief) <= BRIEF_CHARS + 1 and long_brief[-1] in "。…"
-        # 名字撞车按类目取正文：副本「龙渊泽」不该拿到同名任务的剧情
-        assert s.detail("龙渊泽") is None
+        # 名字撞车按类目取正文：副本「龙渊泽」不该拿到同名任务的剧情，
+        # 精确查不到时退一步拿标题里带它的攻略
+        got = s.detail("龙渊泽")
+        assert got is not None and got[1].startswith("副本打法"), got
         # 类目对得上就照常取
         assert s.detail("玄晶")[1].startswith("玩家写的攻略")
         s.close()
