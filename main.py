@@ -87,6 +87,9 @@ class JX3MemoryPlugin(Star):
         self.recent = max(0, _as_int(self.config, "recent_messages", 3))
         self.proxy = str(self.config.get("proxy") or "").strip()
         self.api = str(self.config.get("api_base") or "").strip()
+        self.debug = bool(self.config.get("debug"))
+        # 命中不打日志会让人以为插件没工作：第一次命中也记一条，之后就只看 debug
+        self._announced = False
 
         configured = str(self.config.get("db_path") or "").strip()
         self.db_path = Path(configured) if configured else Path(__file__).parent / "data" / DB_NAME
@@ -145,6 +148,8 @@ class JX3MemoryPlugin(Star):
 
             hits = self.store.search(texts, limit=self.max_items)
             if not hits:
+                if self.debug:
+                    logger.info("jx3 memory: 无命中，本轮不注入")
                 return
 
             detail = None
@@ -160,5 +165,13 @@ class JX3MemoryPlugin(Star):
             )
             if block:
                 parts.append(TextPart(text=block).mark_as_temp())
+                if self.debug or not self._announced:
+                    self._announced = True
+                    logger.info(
+                        "jx3 memory: 命中 %s 条（%s），注入 %s 字",
+                        len(hits),
+                        "、".join(n for n, _ in hits),
+                        len(block),
+                    )
         except Exception as exc:  # noqa: BLE001
             logger.warning("jx3 memory: 本轮注入失败，跳过: %s", exc)

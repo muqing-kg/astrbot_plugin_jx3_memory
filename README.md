@@ -34,6 +34,7 @@ https://github.com/muqing-kg/astrbot_plugin_jx3_memory
 | `max_items` | 5 | 单轮最多注入几条 |
 | `max_chars` | 1200 | 单轮注入字数上限 |
 | `recent_messages` | 3 | 匹配时一并参考最近几条历史，设为 0 只看当前消息 |
+| `debug` | 关 | 打开后每轮在日志里记一条命中了什么、注入多少字 |
 
 命中的条目越多越容易带偏话题，`max_items` 一般 3 到 5 条就够。`recent_messages` 是给「这个呢」「那个怎么打」这类短句用的，让它们能定位到上一轮说过的东西。
 
