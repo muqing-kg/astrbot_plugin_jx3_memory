@@ -60,28 +60,27 @@ def fetch(proxy: str = "", limit: int = LIMIT, api: str = API) -> list[dict]:
     return payload.get("detail") or []
 
 
-def _put_entry(con: sqlite3.Connection, title: str, body: str) -> None:
+def _put_entry(con: sqlite3.Connection, nid: str, title: str, body: str) -> None:
     """公告同时进检索表，标题即主名，正文首段作摘要。"""
     brief = " ".join(body.split())[:BRIEF_CHARS]
-    # INSERT OR REPLACE 会换掉旧行、留下孤儿 term，先清干净
-    for (old_id,) in con.execute("SELECT id FROM entry WHERE kind='news' AND name=?", (title,)).fetchall():
+    # 同一则公告改了标题时得连旧标题那条一起清掉：只按标题找的话，旧标题永久
+    # 留在词表里，新标题反而进不去。meta 存的是公告 id，能一次定位到。
+    for (old_id,) in con.execute(
+        "SELECT id FROM entry WHERE kind='news' AND (meta=? OR name=?)", (nid, title)
+    ).fetchall():
         con.execute("DELETE FROM term WHERE entry_id=?", (old_id,))
-    con.execute(
-        "INSERT OR REPLACE INTO entry(kind, name, brief, meta) VALUES('news', ?, ?, '')",
-        (title, brief),
+        con.execute("DELETE FROM entry WHERE id=?", (old_id,))
+    cur = con.execute(
+        "INSERT INTO entry(kind, name, brief, meta) VALUES('news', ?, ?, ?)", (title, brief, nid)
     )
-    row = con.execute("SELECT id FROM entry WHERE kind='news' AND name=?", (title,)).fetchone()
-    if not row:
-        return
-    eid = row[0]
-    con.execute("DELETE FROM term WHERE entry_id=?", (eid,))
+    eid = cur.lastrowid
     for word in {title, _JUNK.sub("", title)}:
         if len(word) >= 2:
             con.execute("INSERT OR IGNORE INTO term(word, entry_id) VALUES(?, ?)", (word, eid))
 
 
 def sync(db_path: str | Path, proxy: str = "", limit: int = LIMIT, api: str = API) -> tuple[int, int]:
-    """返回 (新增, 更新)。正文没变的条目只刷新抓取时间，不动检索表。"""
+    """返回 (新增, 更新)。正文和标题都没变的条目只刷新抓取时间，不动检索表。"""
     db = Path(db_path)
     # sqlite3.connect 会把不存在的路径建成空库，残库里没有 entry 表，
     # 后面写检索表才报错，看着像公告同步坏了，其实是主库路径配错了
@@ -110,7 +109,7 @@ def sync(db_path: str | Path, proxy: str = "", limit: int = LIMIT, api: str = AP
                 continue
             body = clean(desc.get("content") or "")
             digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
-            old = con.execute("SELECT body_hash FROM news WHERE id=?", (nid,)).fetchone()
+            old = con.execute("SELECT body_hash, title FROM news WHERE id=?", (nid,)).fetchone()
             con.execute(
                 "INSERT OR REPLACE INTO news(id, title, kind, published_at, url, body, body_hash, fetched_at)"
                 " VALUES(?, ?, ?, ?, ?, ?, ?, ?)",
@@ -127,11 +126,11 @@ def sync(db_path: str | Path, proxy: str = "", limit: int = LIMIT, api: str = AP
             )
             if old is None:
                 added += 1
-            elif old[0] != digest:
+            elif old[0] != digest or old[1] != title:
                 updated += 1
             else:
                 continue
-            _put_entry(con, title, body)
+            _put_entry(con, nid, title, body)
         con.commit()
     finally:
         con.close()

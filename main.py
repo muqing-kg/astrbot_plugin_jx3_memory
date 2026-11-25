@@ -89,7 +89,8 @@ class JX3MemoryPlugin(Star):
         self.recent = max(0, _as_int(self.config, "recent_messages", 3))
         self.proxy = str(self.config.get("proxy") or "").strip()
         self.api = str(self.config.get("api_base") or "").strip()
-        self.debug = bool(self.config.get("debug"))
+        # 手改配置文件写成 "false" 时 bool() 会得到 True，按字符串认。
+        self.debug = str(self.config.get("debug") or "").strip().lower() in ("1", "true", "yes", "on")
         # 命中不打日志会让人以为插件没工作：第一次命中也记一条，之后就只看 debug
         self._announced = False
         self._seen: dict[str, set[str]] = {}
@@ -127,8 +128,14 @@ class JX3MemoryPlugin(Star):
 
     async def terminate(self) -> None:
         if self._sync_task is not None:
-            self._sync_task.cancel()
-            self._sync_task = None
+            task, self._sync_task = self._sync_task, None
+            task.cancel()
+            # 同步可能正卡在 to_thread 的 HTTP 上，线程撤不回来。等一小会儿让它收尾，
+            # 不然新实例已经打开同一批库文件，两边并发写会撞 database is locked。
+            try:
+                await asyncio.wait_for(task, 3)
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001 - 关插件不该抛
+                pass
         if self.store is not None:
             self.store.close()
 
@@ -172,7 +179,6 @@ class JX3MemoryPlugin(Star):
                 seen = self._seen.setdefault(key, set())
             fresh = [h for h in hits if h[0] not in seen]
             hits = fresh or hits[:1]
-            seen.update(n for n, _ in hits)
 
             # 正文只在被点名问「怎么做」时给。群里插话时模型是随口接一句，
             # 塞四百字攻略进去只会让它把攻略念一遍——那正是要避免的复述。
@@ -185,10 +191,16 @@ class JX3MemoryPlugin(Star):
                         detail = (name, got[1])
                         break
 
+            used: list[str] = []
             block = render(
-                hits, max_items=self.max_items, max_chars=self.max_chars, detail=detail
+                hits,
+                max_items=self.max_items,
+                max_chars=self.max_chars,
+                detail=detail,
+                keep=used,
             )
             if block:
+                seen.update(used)
                 parts.append(TextPart(text=block).mark_as_temp())
                 if self.debug or not self._announced:
                     self._announced = True

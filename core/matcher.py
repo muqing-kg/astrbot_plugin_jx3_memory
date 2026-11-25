@@ -25,12 +25,15 @@ class Matcher:
     「跳车」与「跳车狗」命中任一都返回 ``跳车狗``，调用方拿主名即可直接查库。
     """
 
-    __slots__ = ("_buckets", "_seen", "_canon")
+    __slots__ = ("_buckets", "_seen", "_canon", "_low")
 
     def __init__(self) -> None:
         self._buckets: dict[str, list[str]] = {}
         self._seen: set[str] = set()
         self._canon: dict[str, list[str]] = {}
+        # 英文缩写玩家常写小写（「jjc」对「JJC」），桶键与子串判定统一走小写，
+        # 主名本身一个字符都不改，否则查不到库。
+        self._low: dict[str, str] = {}
 
     def add(self, key: str, *aliases: str) -> None:
         key = key.strip()
@@ -45,7 +48,8 @@ class Matcher:
         else:
             self._seen.add(key)
             self._canon[key] = [key]
-            self._buckets.setdefault(key[0], []).append(key)
+            self._low[key] = key.lower()
+            self._buckets.setdefault(key[0].lower(), []).append(key)
         for word in aliases:
             word = word.strip()
             if len(word) < _MIN_LEN:
@@ -57,7 +61,8 @@ class Matcher:
                 continue
             self._seen.add(word)
             self._canon[word] = [key]
-            self._buckets.setdefault(word[0], []).append(word)
+            self._low[word] = word.lower()
+            self._buckets.setdefault(word[0].lower(), []).append(word)
 
     def extend(self, rows: Iterable[tuple[str, ...]]) -> None:
         for row in rows:
@@ -73,12 +78,13 @@ class Matcher:
         if not segments:
             return []
 
+        low_segs = [s.lower() for s in segments]
         hits: list[str] = []
         # ponytail: 单字分桶，30 万词实测 0.68 ms/轮，够群聊用。首字分布极不均匀的
         # 词表（某个常用字下几千词）会退化到几毫秒，届时改双字前缀桶。
-        for ch in set(text):
+        for ch in set("".join(segments).lower()):
             for word in self._buckets.get(ch, ()):
-                if any(word in seg for seg in segments):
+                if any(self._low[word] in seg for seg in low_segs):
                     hits.append(word)
 
         hits.sort(key=lambda w: (-len(w), w))
@@ -112,6 +118,7 @@ def _self_check() -> None:
     m.add("紫霞功", "紫霞", "紫霞心法")
     m.add("天策")
     m.add("天策府")
+    m.add("JJC")
     m.add("单")  # 短于 2 字，不入桶
 
     # 真实群聊句
@@ -137,6 +144,9 @@ def _self_check() -> None:
 
     # 单字不成词
     assert "单" not in m
+
+    # 英文缩写不分大小写
+    assert "JJC" in m.find("jjc多少分算高")
 
     # limit 截断
     assert len(m.find("低保大铁黑工包团", limit=2)) == 2

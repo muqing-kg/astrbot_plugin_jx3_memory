@@ -111,9 +111,14 @@ class Store:
                 f"file:{dpath}?mode=ro", uri=True, check_same_thread=False
             )
             if apath.is_file():
-                self._detail.execute(
-                    "ATTACH DATABASE ? AS attr", (f"file:{apath}?mode=ro",)
-                )
+                # 属性库只用于取正文，坏了不能连累摘要——68 MB 词表库本身还在。
+                try:
+                    self._detail.execute(
+                        "ATTACH DATABASE ? AS attr", (f"file:{apath}?mode=ro",)
+                    )
+                except sqlite3.Error:
+                    # 挂不上就当作没有属性库，正文照常从 detail 表取
+                    pass
         self.reload()
 
     def reload(self) -> None:
@@ -197,18 +202,21 @@ class Store:
                     return (name, row[0])
             ak = _AK.get(kind)
             if ak:
-                row = self._detail.execute(
-                    "SELECT body FROM attr WHERE name=? AND kind=?"
-                    " ORDER BY length(body) DESC LIMIT 1",
-                    (name, ak),
-                ).fetchone()
+                # 属性库没挂上时这张表根本不存在，别让它把上面查到的正文一起丢掉
+                try:
+                    row = self._detail.execute(
+                        "SELECT body FROM attr WHERE name=? AND kind=?"
+                        " ORDER BY length(body) DESC LIMIT 1",
+                        (name, ak),
+                    ).fetchone()
+                except sqlite3.Error:
+                    row = None
                 if row and len(row[0]) >= MIN_DETAIL:
                     return (name, row[0])
-            # 副本、地图这类自己没有正文——打法写在别人的攻略标题里（「龙渊泽·25人挑战攻略」）。
-            # 精确查不到就按标题包含再找一次，否则问「XX 怎么打」只能答一句摘要。
-            # 标题以它开头的优先，其次才看正文长短，免得挑中最啰嗦的那篇。
-            # 只对这些类目兜底：心法/技能/物品有自己的属性库，模糊匹配会抓到同名的
-            # 别的东西（「离经易道」曾命中《离经易道·秘卷》这本秘籍），给错比不给糟。
+            # 任务、奇遇、成就自己没正文，做法写在别人的攻略标题里（「龙渊泽·25人挑战攻略」）。
+            # 精确查不到就按标题包含再找一次，标题以它开头的优先，其次才看正文长短。
+            # 只对这三类兜底：心法/技能/物品有自己的属性库；副本和首领不兜底——库里
+            # 标题带副本名的帖子全是成就做法，兜了会把「荒血路怎么打」答成声望或无伤成就。
             if kind in _FUZZY_KINDS and len(name) >= 3:
                 row = self._detail.execute(
                     "SELECT body FROM detail WHERE kind='post' AND name LIKE ?"

@@ -36,6 +36,7 @@ def render(
     max_items: int = MAX_ITEMS,
     max_chars: int = MAX_CHARS,
     detail: tuple[str, str] | None = None,
+    keep: list[str] | None = None,
 ) -> str:
     """items 为 [(名字, 摘要)]，摘要在库内已截短。返回空串表示本轮不注入。
 
@@ -64,8 +65,9 @@ def render(
         if not brief:
             continue
         # 名字里带已选条目名的，是同一件事的细分（「万花·离经易道·竞技对抗」之于
-        # 「离经易道」），念出来只会挤掉别的条目
-        if any(n in name for n in picked):
+        # 「离经易道」）；反过来已选名包含当前名的（「长安城」之于「长安」）也一样，
+        # 念出来是同一块地方的两条记录
+        if any(n in name or name in n for n in picked):
             continue
         part = f"{name}：{brief}"
         if used + len(part) + 1 > max_chars:
@@ -77,6 +79,10 @@ def render(
             break
     if not parts:
         return ""
+    # 只把真写进去的名字交回去记「给过了」。被预算或去重挤掉的不算给过，
+    # 否则用户下轮点名问它时，手里反而是空的。
+    if keep is not None:
+        keep.extend(picked)
     return HEAD + "；".join(parts) + TAIL
 
 
@@ -105,10 +111,19 @@ def _self_check() -> None:
     sub = render([("离经易道", "万花心法"), ("万花·离经易道·竞技对抗", "一件装备")])
     assert "万花·离经易道" not in sub and "离经易道：万花心法" in sub
 
+    # 反过来也去重：同一个地点在库里既是「长安城」也是「长安」
+    loc = render([("长安城", "中原，城市"), ("长安", "中原，旧城")])
+    assert "长安：中原，旧城" not in loc, loc
+
     # 问「怎么做」时那条的正文排在摘要前面
     with_detail = render([("大铁", "玄晶的俗称")], detail=("三山四海", "第一幕 挖宝逢奇缘"))
     assert "三山四海：第一幕" in with_detail
     assert with_detail.index("三山四海") < with_detail.index("大铁")
+
+    # 被预算或去重挤掉的条目不算「给过」
+    kept: list[str] = []
+    render([("甲", "一" * 50), ("乙", "二" * 50)], max_chars=len(HEAD) + 60, keep=kept)
+    assert kept == ["甲"], kept
 
     # 上游正文里的零宽字符不念给模型
     assert "\u200b" not in render([("包团", "包团老板\u200b，指副本团")])
