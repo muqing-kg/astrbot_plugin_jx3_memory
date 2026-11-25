@@ -48,6 +48,11 @@ def _cover(name: str, segments: list[str]) -> int:
         return 2
     return 2 if any(all(s in seg for s in segs) for seg in segments) else 1
 
+def _twins(a: str, b: str, brief: dict[str, str]) -> bool:
+    """两条互为别名：各自的摘要里都提到了对方的名字。"""
+    return b in brief.get(a, "") and a in brief.get(b, "")
+
+
 PRIO = {
     "xf": 1,
     "skill": 2,
@@ -163,7 +168,13 @@ class Store:
                 -len(h[0]),
             )
         )
-        return [(n, b) for n, b in hits if b][:limit]
+        # 同一样东西在通识库里常被写成两条（「玄晶」与「大铁」），各自把对方写进
+        # 摘要，念出来是同一句话的两种说法，白占预算。
+        out: list[tuple[str, str]] = []
+        for n, b in hits:
+            if b and not any(_twins(n, m, self._brief) for m, _ in out):
+                out.append((n, b))
+        return out[:limit]
 
     def detail(self, name: str) -> tuple[str, str] | None:
         """按名字取正文，返回 (名字, 正文)；没有正文库或没这条就 None。

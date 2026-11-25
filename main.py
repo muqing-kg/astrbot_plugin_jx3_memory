@@ -36,6 +36,8 @@ except Exception:  # noqa: BLE001 - 没有就不注入，绝不退回 system_pro
 PLUGIN_NAME = "astrbot_plugin_jx3_memory"
 DB_NAME = "memory.sqlite3"
 SYNC_HOUR = 3
+# 记住每个会话最近注入过哪些词，超过这么多会话就整表清掉
+MAX_SESSIONS = 500
 
 # 句子里出现这些词，说明是在问做法而不是随口一提，才值得把正文掏出来
 ASK_WORDS = (
@@ -90,6 +92,7 @@ class JX3MemoryPlugin(Star):
         self.debug = bool(self.config.get("debug"))
         # 命中不打日志会让人以为插件没工作：第一次命中也记一条，之后就只看 debug
         self._announced = False
+        self._seen: dict[str, set[str]] = {}
 
         configured = str(self.config.get("db_path") or "").strip()
         self.db_path = Path(configured) if configured else Path(__file__).parent / "data" / DB_NAME
@@ -146,11 +149,26 @@ class JX3MemoryPlugin(Star):
                 if text:
                     texts.append(text)
 
-            hits = self.store.search(texts, limit=self.max_items)
+            # 先只看这句话本身。把上下文一起找会把前几轮聊过的词带进来，问
+            # 「那追魂骨呢」答成三山四海就是这么来的。只有代词指代（「它呢」）
+            # 自己找不到东西时，才退回上下文。
+            own = self.store.search([req.prompt or ""], limit=self.max_items) if req.prompt else []
+            hits = own or self.store.search(texts, limit=self.max_items)
             if not hits:
                 if self.debug:
                     logger.info("jx3 memory: 无命中，本轮不注入")
                 return
+
+            # 同一会话连着几轮命中同一条，就不再重复给——重复注入的直接后果是复述。
+            # 但全见过时仍给一条：手里空着，模型只会编。
+            key = getattr(event, "unified_msg_origin", "") or ""
+            seen = self._seen.setdefault(key, set())
+            if len(self._seen) > MAX_SESSIONS:
+                self._seen.clear()
+                seen = self._seen.setdefault(key, set())
+            fresh = [h for h in hits if h[0] not in seen]
+            hits = fresh or hits[:1]
+            seen.update(n for n, _ in hits)
 
             # 正文只在被点名问「怎么做」时给。群里插话时模型是随口接一句，
             # 塞四百字攻略进去只会让它把攻略念一遍——那正是要避免的复述。
