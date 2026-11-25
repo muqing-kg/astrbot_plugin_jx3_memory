@@ -152,8 +152,11 @@ class JX3MemoryPlugin(Star):
                     logger.info("jx3 memory: 无命中，本轮不注入")
                 return
 
+            # 正文只在被点名问「怎么做」时给。群里插话时模型是随口接一句，
+            # 塞四百字攻略进去只会让它把攻略念一遍——那正是要避免的复述。
             detail = None
-            if any(w in (req.prompt or "") for w in ASK_WORDS):
+            asked = getattr(event, "is_at_or_wake_command", False)
+            if asked and any(w in (req.prompt or "") for w in ASK_WORDS):
                 for name, _ in hits:
                     got = self.store.detail(name)
                     if got:
