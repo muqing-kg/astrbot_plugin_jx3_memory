@@ -31,6 +31,22 @@ MAX_CHARS = 1200
 DETAIL_CHARS = 120
 
 
+# 玩家攻略的开头常是「本文截止于…」「有疑问请微博私信」「前言」「随时更新」
+# 「从我自己的 word 复制过来的」这类水话，一百二十字预算全被它吃掉就白给了
+_SKIP = re.compile(
+    r"前言|有疑问|微博|本文|随时更新|复制过来|整理|声明|感谢|测试服|欢迎|留言|转跳"
+    r"|转载|排版|目录|如需|过时|凑合|招收|已更新|B站|视频|建议|见谅|补充|先说明"
+    r"|副本开放|掉落品质|防御等级|疲劳值|装分"
+)
+_SENT = re.compile(r"[^。！？；!?;]+[。！？；!?;]?")
+
+
+def _trim(body: str) -> str:
+    """跳过开头的自述和寒暄，从第一句有实质内容的话开始。"""
+    kept = [s for s in _SENT.findall(body) if s.strip() and not _SKIP.search(s)]
+    return "".join(kept) or body
+
+
 def render(
     items: list[tuple[str, str]],
     max_items: int = MAX_ITEMS,
@@ -52,6 +68,7 @@ def render(
         # 帖子正文里有存成字面两字符的反斜杠 n，直接注进去会显得很怪
         body = " ".join(_ZW.sub("", body or "").replace("\\n", " ").split())
         body = " ".join(_RULE.sub(" ", body).split())
+        body = _trim(body)
         if body:
             part = f"{name}：{body[:DETAIL_CHARS]}"
             if used + len(part) + 1 <= max_chars:
@@ -124,6 +141,11 @@ def _self_check() -> None:
     kept: list[str] = []
     render([("甲", "一" * 50), ("乙", "二" * 50)], max_chars=len(HEAD) + 60, keep=kept)
     assert kept == ["甲"], kept
+
+    # 攻略开头的自述和寒暄不占正文预算
+    noisy = render([], detail=("荒血路", "本文截止于2019年7月7日，有疑问可在微博私信我。"
+                              "老一：进站先打掉小怪，往右边绕路可以避开。"))
+    assert "本文截止" not in noisy and "老一" in noisy, noisy
 
     # 上游正文里的零宽字符不念给模型
     assert "\u200b" not in render([("包团", "包团老板\u200b，指副本团")])

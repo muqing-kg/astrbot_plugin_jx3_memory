@@ -27,8 +27,11 @@ _DK = {
     "item": ("post", "item"),
     "knowledge": ("post",),
     "skill": ("post", "skill"),
+    # 副本有自己的攻略池（cms posts type=fb），不走 post：标题带副本名的帖子
+    # 都是成就做法，拿来当打法就是答非所问
+    "dungeon": ("fb",),
 }
-_AK = {"item": "item", "skill": "skill", "xf": "talent"}
+_AK = {"item": "item", "skill": "skill", "xf": "talent", "dungeon": "dungeon"}
 
 # 只有这些类目在精确查不到正文时按标题模糊兜底。
 # 副本和首领不在里面：攻略库里凡是标题带副本名的帖子，内容都是成就做法
