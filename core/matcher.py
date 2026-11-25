@@ -30,18 +30,33 @@ class Matcher:
     def __init__(self) -> None:
         self._buckets: dict[str, list[str]] = {}
         self._seen: set[str] = set()
-        self._canon: dict[str, str] = {}
+        self._canon: dict[str, list[str]] = {}
 
     def add(self, key: str, *aliases: str) -> None:
         key = key.strip()
-        if len(key) < _MIN_LEN or key in self._seen:
+        if len(key) < _MIN_LEN:
             return
-        for word in (key, *aliases):
+        if key in self._canon:
+            # 这个词先被别人当成别名登记过（「离经易道」既是心法也是几件装备的名字），
+            # 主名仍要指回自己，且排在最前。
+            keys = self._canon[key]
+            if key not in keys:
+                keys.insert(0, key)
+        else:
+            self._seen.add(key)
+            self._canon[key] = [key]
+            self._buckets.setdefault(key[0], []).append(key)
+        for word in aliases:
             word = word.strip()
-            if len(word) < _MIN_LEN or word in self._seen:
+            if len(word) < _MIN_LEN:
+                continue
+            if word in self._canon:
+                keys = self._canon[word]
+                if key not in keys:
+                    keys.append(key)
                 continue
             self._seen.add(word)
-            self._canon[word] = key
+            self._canon[word] = [key]
             self._buckets.setdefault(word[0], []).append(word)
 
     def extend(self, rows: Iterable[tuple[str, ...]]) -> None:
@@ -70,11 +85,11 @@ class Matcher:
 
         out: list[str] = []
         for word in hits:
-            key = self._canon[word]
-            if key not in out:
-                out.append(key)
-                if limit is not None and len(out) >= limit:
-                    break
+            for key in self._canon[word]:
+                if key not in out:
+                    out.append(key)
+                    if limit is not None and len(out) >= limit:
+                        return out
         return out
 
     def __len__(self) -> int:

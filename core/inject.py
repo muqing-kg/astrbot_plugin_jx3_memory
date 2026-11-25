@@ -13,16 +13,33 @@ HEAD = (
 
 MAX_ITEMS = 5
 MAX_CHARS = 1200
+DETAIL_CHARS = 400
 
 
 def render(
     items: list[tuple[str, str]],
     max_items: int = MAX_ITEMS,
     max_chars: int = MAX_CHARS,
+    detail: tuple[str, str] | None = None,
 ) -> str:
-    """items 为 [(名字, 摘要)]，摘要在库内已截短。返回空串表示本轮不注入。"""
+    """items 为 [(名字, 摘要)]，摘要在库内已截短。返回空串表示本轮不注入。
+
+    detail 是问「怎么做」时那一条的正文，排在摘要前面，因为它才是真答案。
+    """
     lines: list[str] = []
     used = len(HEAD)
+
+    if detail:
+        name, body = detail
+        # 帖子正文里有存成字面两字符的反斜杠 n，直接注进去会显得很怪
+        body = " ".join((body or "").replace("\\n", " ").split())
+        if body:
+            line = f"· {name}：{body[:DETAIL_CHARS]}"
+            if used + len(line) + 1 <= max_chars * 2:
+                lines.append(line)
+                used += len(line) + 1
+        items = [(n, b) for n, b in items if n != name]
+
     for name, brief in items:
         brief = (brief or "").strip()
         if not brief:
@@ -56,6 +73,11 @@ def _self_check() -> None:
     # 字数上限：最后一条塞不下就整条丢掉，不截半句
     tight = render([("甲", "一" * 50), ("乙", "二" * 50)], max_chars=len(HEAD) + 60)
     assert "甲" in tight and "乙" not in tight
+
+    # 问「怎么做」时那条的正文排在摘要前面
+    with_detail = render([("大铁", "玄晶的俗称")], detail=("三山四海", "第一幕 挖宝逢奇缘"))
+    assert "· 三山四海：第一幕" in with_detail
+    assert with_detail.index("三山四海") < with_detail.index("大铁")
 
     print("inject self-check ok")
 

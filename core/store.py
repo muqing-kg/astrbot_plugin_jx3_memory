@@ -5,13 +5,27 @@
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from pathlib import Path
-
 try:
     from .matcher import SEP, Matcher
 except ImportError:  # 顶层导入（自检、直接运行）
     from matcher import SEP, Matcher
+
+DETAIL_NAME = "memory_detail.sqlite3"
+ATTR_NAME = "memory_attr.sqlite3"
+MIN_DETAIL = 20
+
+_PUNCT = re.compile(r"[！!·・—－\-：:、，,（）()\[\]【】]+")
+
+
+def _cover(name: str, text: str) -> int:
+    """名字按标点拆段后，各段是否都在消息里出现。2 表示可当整条命中。"""
+    segs = [s for s in _PUNCT.split(name) if len(s) >= 2]
+    if len(segs) < 2:
+        return 2
+    return 2 if all(s in text for s in segs) else 1
 
 PRIO = {
     "school": 0,
@@ -26,6 +40,10 @@ PRIO = {
     "news": 9,
     "item": 10,
     "dlc": 6,
+    "map": 6,
+    "npc": 6,
+    "buff": 5,
+    "pet": 7,
 }
 
 # 物品、任务、成就里的两字名几乎都是通用词（「长安」「龙渊」既是地名也是任务名），
@@ -59,6 +77,18 @@ class Store:
         self.path = Path(db_path)
         self.matcher = Matcher()
         self._brief: dict[str, str] = {}
+        self._kind: dict[str, str] = {}
+        self._detail: sqlite3.Connection | None = None
+        dpath = self.path.parent / DETAIL_NAME
+        apath = self.path.parent / ATTR_NAME
+        if dpath.is_file():
+            self._detail = sqlite3.connect(
+                f"file:{dpath}?mode=ro", uri=True, check_same_thread=False
+            )
+            if apath.is_file():
+                self._detail.execute(
+                    "ATTACH DATABASE ? AS attr", (f"file:{apath}?mode=ro",)
+                )
         self.reload()
 
     def reload(self) -> None:
@@ -77,6 +107,7 @@ class Store:
         for r in rows:
             win.setdefault(r["name"], r)
         self._brief = {n: _clip(r["brief"] or "") for n, r in win.items()}
+        self._kind = {n: r["kind"] for n, r in win.items()}
 
         name_of = {r["id"]: r["name"] for r in rows}
         live = {r["id"] for r in win.values()}
@@ -95,15 +126,44 @@ class Store:
 
     def search(self, texts: list[str], limit: int = 5) -> list[tuple[str, str]]:
         """返回 [(名字, 摘要)]，长词优先；摘要为空的条目跳过。"""
-        out: list[tuple[str, str]] = []
-        for name in self.matcher.find(SEP.join(texts)):
-            brief = self._brief.get(name)
-            if not brief:
-                continue
-            out.append((name, brief))
-            if len(out) >= limit:
-                break
-        return out
+        joined = SEP.join(texts)
+        # 不在这里限条数：长名（「万花·离经易道·竞技对抗（234品）」）先出，
+        # 想要的那条短名在心法里，截断会把正确答案挤掉。
+        hits = [(n, self._brief.get(n, "")) for n in self.matcher.find(joined)]
+        # 名字被标点断开时（「傲意战魂！第十阶」），消息里各段都出现才算真命中；
+        # 只中一段的往后排，否则问「第十阶」会给出「第一阶」的攻略。
+        # 同分再按类目优先级：问「离经易道」要的是心法，不是那件同名的装备。
+        hits.sort(
+            key=lambda h: (
+                -_cover(h[0], joined),
+                PRIO.get(self._kind.get(h[0], ""), 99),
+                -len(h[0]),
+            )
+        )
+        return [(n, b) for n, b in hits if b][:limit]
+
+    def detail(self, name: str) -> tuple[str, str] | None:
+        """按名字取正文，返回 (类目, 正文)；没有正文库或没这条就 None。
+
+        先找攻略/任务/奇遇的正文，找不到再退到属性库（装备属性、技能描述、奇穴）。
+        """
+        if self._detail is None:
+            return None
+        try:
+            row = self._detail.execute(
+                "SELECT kind, body FROM detail WHERE name=? ORDER BY length(body) DESC LIMIT 1",
+                (name,),
+            ).fetchone()
+            if row and len(row[1]) >= MIN_DETAIL:
+                return (row[0], row[1])
+            row = self._detail.execute(
+                "SELECT kind, body FROM attr WHERE name=? ORDER BY length(body) DESC LIMIT 1",
+                (name,),
+            ).fetchone()
+        except sqlite3.Error:
+            return None
+        # 只有「品质 4；未知」这种一行不到的属性，当正文念出来还不如不说
+        return (row[0], row[1]) if row and len(row[1]) >= MIN_DETAIL else None
 
     def __len__(self) -> int:
         return len(self.matcher)

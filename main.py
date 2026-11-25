@@ -37,6 +37,12 @@ DB_NAME = "memory.sqlite3"
 MAX_SESSIONS = 500
 SYNC_HOUR = 3
 
+# 句子里出现这些词，说明是在问做法而不是随口一提，才值得把正文掏出来
+ASK_WORDS = (
+    "怎么", "如何", "怎样", "在哪", "哪里", "流程", "攻略", "步骤",
+    "怎么做", "怎么打", "怎么获得", "怎么拿", "怎么办", "触发",
+)
+
 
 def _as_int(config: Any, key: str, default: int) -> int:
     try:
@@ -138,7 +144,17 @@ class JX3MemoryPlugin(Star):
             self._seen.clear()
         self._seen[key] = names
 
-        block = render(hits, max_items=self.max_items, max_chars=self.max_chars)
+        detail = None
+        if any(w in (req.prompt or "") for w in ASK_WORDS):
+            for name, _ in hits:
+                got = self.store.detail(name)
+                if got:
+                    detail = (name, got[1])
+                    break
+
+        block = render(
+            hits, max_items=self.max_items, max_chars=self.max_chars, detail=detail
+        )
         if not block:
             return
         if TextPart is not None:

@@ -5,3 +5,5 @@ __pycache__/
 .venv/
 data/*
 !data/memory.sqlite3
+!data/memory_detail.sqlite3
+!data/memory_attr.sqlite3
