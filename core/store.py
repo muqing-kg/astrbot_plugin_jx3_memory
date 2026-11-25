@@ -29,6 +29,9 @@ _DK = {
 }
 _AK = {"item": "item", "skill": "skill", "xf": "talent"}
 
+# 只有这些类目在精确查不到正文时按标题模糊兜底：副本和首领的打法写在攻略标题里
+_FUZZY_KINDS = frozenset({"dungeon", "boss", "quest", "serendipity", "achievement"})
+
 _PUNCT = re.compile(r"[！!·・—－\-：:、，,（）()\[\]【】]+")
 
 
@@ -191,7 +194,9 @@ class Store:
             # 副本、地图这类自己没有正文——打法写在别人的攻略标题里（「龙渊泽·25人挑战攻略」）。
             # 精确查不到就按标题包含再找一次，否则问「XX 怎么打」只能答一句摘要。
             # 标题以它开头的优先，其次才看正文长短，免得挑中最啰嗦的那篇。
-            if len(name) >= 3:
+            # 只对这些类目兜底：心法/技能/物品有自己的属性库，模糊匹配会抓到同名的
+            # 别的东西（「离经易道」曾命中《离经易道·秘卷》这本秘籍），给错比不给糟。
+            if kind in _FUZZY_KINDS and len(name) >= 3:
                 row = self._detail.execute(
                     "SELECT body FROM detail WHERE kind='post' AND name LIKE ?"
                     " ORDER BY (name LIKE ?) DESC, length(body) DESC LIMIT 1",
@@ -233,7 +238,9 @@ def _self_check() -> None:
             INSERT INTO entry VALUES (5,'item','空条目','','','');
             INSERT INTO entry VALUES (6,'quest','洛道','两字任务名，不入词表','','');
             INSERT INTO entry VALUES (7,'knowledge','长句','甲' || hex(randomblob(200)) || '。','','');
-            INSERT INTO term VALUES ('大铁',1),('玄晶',1),('玄晶',2),('长安',3),('长安',4),('空条目',5),('洛道',6),('长句',7);
+            INSERT INTO entry VALUES (8,'dungeon','龙渊泽','巴蜀风云副本','','');
+            INSERT INTO entry VALUES (9,'xf','离经易道','万花心法，治疗','','');
+            INSERT INTO term VALUES ('大铁',1),('玄晶',1),('玄晶',2),('长安',3),('长安',4),('空条目',5),('洛道',6),('长句',7),('龙渊泽',8),('离经易道',9);
             """
         )
         db.commit()
@@ -246,6 +253,7 @@ def _self_check() -> None:
             INSERT INTO detail VALUES ('quest','龙渊泽','任务正文：一段与副本无关的背景故事，够长够长够长。','');
             INSERT INTO detail VALUES ('post','龙渊泽·25人挑战攻略','副本打法正文：老一门口集合，老二躲红圈，够二十个字了。','');
             INSERT INTO detail VALUES ('post','玄晶','玩家写的攻略正文，讲玄晶怎么来，够二十个字了。','');
+            INSERT INTO detail VALUES ('post','《离经易道·秘卷》','这是同名秘籍的正文，跟心法无关，够二十个字了。','');
             """
         )
         det.commit()
@@ -274,6 +282,8 @@ def _self_check() -> None:
         assert got is not None and got[1].startswith("副本打法"), got
         # 类目对得上就照常取
         assert s.detail("玄晶")[1].startswith("玩家写的攻略")
+        # 心法不走模糊兜底：同名的《离经易道·秘卷》是秘籍，给了比不给糟
+        assert s.detail("离经易道") is None
         s.close()
         print(f"store self-check ok, {len(s)} words")
 
