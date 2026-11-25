@@ -6,11 +6,11 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.provider import ProviderRequest
 from astrbot.api.star import Context, Star
@@ -30,7 +30,8 @@ try:
 except Exception:  # noqa: BLE001 - 没有就不注入，绝不退回 system_prompt
     TextPart = None
 
-logger = logging.getLogger("astrbot.plugin.jx3_memory")
+# logger 用 AstrBot 那个，不要自己 logging.getLogger：AstrBot 的 Formatter 要求
+# record 带 plugin_tag，自己建的 logger 不过它的 Filter，一条日志就能把插件加载搞崩。
 
 PLUGIN_NAME = "astrbot_plugin_jx3_memory"
 DB_NAME = "memory.sqlite3"
