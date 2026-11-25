@@ -166,7 +166,7 @@ class Store:
         return [(n, b) for n, b in hits if b][:limit]
 
     def detail(self, name: str) -> tuple[str, str] | None:
-        """按名字取正文，返回 (类目, 正文)；没有正文库或没这条就 None。
+        """按名字取正文，返回 (名字, 正文)；没有正文库或没这条就 None。
 
         名字会撞车：任务「龙渊泽」和副本「龙渊泽」同名，只按名字查会取到任务的
         背景故事，问「老三怎么打」就答成剧情。所以按条目类目限定来源，对不上的
@@ -183,7 +183,7 @@ class Store:
                     (name, dk),
                 ).fetchone()
                 if row and len(row[0]) >= MIN_DETAIL:
-                    return (dk, row[0])
+                    return (name, row[0])
             ak = _AK.get(kind)
             if ak:
                 row = self._detail.execute(
@@ -192,7 +192,7 @@ class Store:
                     (name, ak),
                 ).fetchone()
                 if row and len(row[0]) >= MIN_DETAIL:
-                    return (ak, row[0])
+                    return (name, row[0])
             # 副本、地图这类自己没有正文——打法写在别人的攻略标题里（「龙渊泽·25人挑战攻略」）。
             # 精确查不到就按标题包含再找一次，否则问「XX 怎么打」只能答一句摘要。
             # 标题以它开头的优先，其次才看正文长短，免得挑中最啰嗦的那篇。
@@ -205,7 +205,7 @@ class Store:
                     (f"%{name}%", f"{name}%"),
                 ).fetchone()
                 if row and len(row[0]) >= MIN_DETAIL:
-                    return ("post", row[0])
+                    return (name, row[0])
         except sqlite3.Error:
             return None
         return None
