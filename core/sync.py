@@ -14,7 +14,7 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
-API = "https://www.jx3api.com/news/records"
+API = "https://www.jx3api.com"
 UA = "Mozilla/5.0 astrbot-plugin-jx3-memory"
 LIMIT = 50
 BRIEF_CHARS = 120
@@ -49,8 +49,8 @@ def to_time(desc: dict, date_str: str) -> str:
     return ((desc.get("asktime") or "").strip() or (date_str or "").strip()).replace("/", "-")
 
 
-def fetch(proxy: str = "", limit: int = LIMIT) -> list[dict]:
-    url = f"{API}?limit={max(1, min(LIMIT, int(limit)))}"
+def fetch(proxy: str = "", limit: int = LIMIT, api: str = API) -> list[dict]:
+    url = f"{(api or API).rstrip('/')}/news/records?limit={max(1, min(LIMIT, int(limit)))}"
     request = urllib.request.Request(url, headers={"User-Agent": UA})
     handlers = [urllib.request.ProxyHandler({"http": proxy, "https": proxy})] if proxy else []
     with urllib.request.build_opener(*handlers).open(request, timeout=30) as resp:
@@ -67,8 +67,8 @@ def _put_entry(con: sqlite3.Connection, title: str, body: str) -> None:
     for (old_id,) in con.execute("SELECT id FROM entry WHERE kind='news' AND name=?", (title,)).fetchall():
         con.execute("DELETE FROM term WHERE entry_id=?", (old_id,))
     con.execute(
-        "INSERT OR REPLACE INTO entry(kind, name, brief, meta, body) VALUES('news', ?, ?, '', ?)",
-        (title, brief, body),
+        "INSERT OR REPLACE INTO entry(kind, name, brief, meta) VALUES('news', ?, ?, '')",
+        (title, brief),
     )
     row = con.execute("SELECT id FROM entry WHERE kind='news' AND name=?", (title,)).fetchone()
     if not row:
@@ -80,9 +80,9 @@ def _put_entry(con: sqlite3.Connection, title: str, body: str) -> None:
             con.execute("INSERT OR IGNORE INTO term(word, entry_id) VALUES(?, ?)", (word, eid))
 
 
-def sync(db_path: str | Path, proxy: str = "", limit: int = LIMIT) -> tuple[int, int]:
+def sync(db_path: str | Path, proxy: str = "", limit: int = LIMIT, api: str = API) -> tuple[int, int]:
     """返回 (新增, 更新)。正文没变的条目只刷新抓取时间，不动检索表。"""
-    items = fetch(proxy, limit)
+    items = fetch(proxy, limit, api)
     now = datetime.now().astimezone().isoformat(timespec="seconds")
     added = updated = 0
 
@@ -141,7 +141,7 @@ def _self_check() -> None:
         con = sqlite3.connect(db)
         con.executescript(
             """
-            CREATE TABLE entry(id INTEGER PRIMARY KEY, kind TEXT, name TEXT, brief TEXT, meta TEXT, body TEXT);
+            CREATE TABLE entry(id INTEGER PRIMARY KEY, kind TEXT, name TEXT, brief TEXT, meta TEXT);
             CREATE UNIQUE INDEX ux_entry ON entry(kind, name);
             CREATE TABLE term(word TEXT, entry_id INTEGER, PRIMARY KEY(word, entry_id)) WITHOUT ROWID;
             CREATE TABLE news(id TEXT PRIMARY KEY, title TEXT, kind TEXT, published_at TEXT,
@@ -159,7 +159,7 @@ def _self_check() -> None:
         calls = []
         real = fetch
 
-        def fake(proxy="", limit=LIMIT):
+        def fake(proxy="", limit=LIMIT, api=API):
             calls.append(proxy)
             return [
                 {
@@ -177,7 +177,7 @@ def _self_check() -> None:
             assert sync(db, proxy="http://127.0.0.1:7890") == (0, 0)  # 没变
             assert calls[-1] == "http://127.0.0.1:7890"  # 代理确实传下去了
             cache = {"v": "<p>十点维护，预计两小时</p>"}
-            globals()["fetch"] = lambda proxy="", limit=LIMIT: [
+            globals()["fetch"] = lambda proxy="", limit=LIMIT, api=API: [
                 {
                     "title": "例行维护公告",
                     "type": "官方公告",

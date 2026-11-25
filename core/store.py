@@ -17,18 +17,32 @@ DETAIL_NAME = "memory_detail.sqlite3"
 ATTR_NAME = "memory_attr.sqlite3"
 MIN_DETAIL = 20
 
+# 条目类目 → 正文库/属性库里对应的类目。不在表里的类目没有正文可取。
+_DK = {
+    "quest": "quest",
+    "serendipity": "serendipity",
+    "achievement": "post",
+    "item": "post",
+    "knowledge": "post",
+    "skill": "post",
+    "xf": "post",
+}
+_AK = {"item": "item", "skill": "skill", "xf": "talent"}
+
 _PUNCT = re.compile(r"[！!·・—－\-：:、，,（）()\[\]【】]+")
 
 
-def _cover(name: str, text: str) -> int:
-    """名字按标点拆段后，各段是否都在消息里出现。2 表示可当整条命中。"""
+def _cover(name: str, segments: list[str]) -> int:
+    """名字按标点拆段后，各段是否在同一段消息里凑齐。2 表示可当整条命中。
+
+    跨消息凑的不算：上一条提「万花」、这一条提「离经易道」，说的不一定是一回事。
+    """
     segs = [s for s in _PUNCT.split(name) if len(s) >= 2]
     if len(segs) < 2:
         return 2
-    return 2 if all(s in text for s in segs) else 1
+    return 2 if any(all(s in seg for s in segs) for seg in segments) else 1
 
 PRIO = {
-    "school": 0,
     "xf": 1,
     "skill": 2,
     "dungeon": 3,
@@ -97,7 +111,6 @@ class Store:
             raise FileNotFoundError(self.path)
         self.db = sqlite3.connect(str(self.path), check_same_thread=False)
         self.db.row_factory = sqlite3.Row
-        self.matcher = Matcher()
         self._load()
 
     def _load(self) -> None:
@@ -106,8 +119,8 @@ class Store:
         win: dict[str, sqlite3.Row] = {}
         for r in rows:
             win.setdefault(r["name"], r)
-        self._brief = {n: _clip(r["brief"] or "") for n, r in win.items()}
-        self._kind = {n: r["kind"] for n, r in win.items()}
+        brief = {n: _clip(r["brief"] or "") for n, r in win.items()}
+        kind = {n: r["kind"] for n, r in win.items()}
 
         name_of = {r["id"]: r["name"] for r in rows}
         live = {r["id"] for r in win.values()}
@@ -117,16 +130,20 @@ class Store:
                 name = name_of[eid]
                 if name in win and win[name]["id"] == eid:
                     aliases.setdefault(name, []).append(word)
+        matcher = Matcher()
         for name, words in aliases.items():
             floor = 3 if win[name]["kind"] in SHORT_KINDS else 2
             keep = [w for w in words if len(w) >= floor]
             if len(name) >= floor:
-                self.matcher.add(name, *keep)
+                matcher.add(name, *keep)
         self.db.close()
+        # 建完再整体换上：重装期间的搜索继续用旧词表，不会出现空窗
+        self.matcher, self._brief, self._kind = matcher, brief, kind
 
     def search(self, texts: list[str], limit: int = 5) -> list[tuple[str, str]]:
         """返回 [(名字, 摘要)]，长词优先；摘要为空的条目跳过。"""
-        joined = SEP.join(texts)
+        segments = [t for t in texts if t]
+        joined = SEP.join(segments)
         # 不在这里限条数：长名（「万花·离经易道·竞技对抗（234品）」）先出，
         # 想要的那条短名在心法里，截断会把正确答案挤掉。
         hits = [(n, self._brief.get(n, "")) for n in self.matcher.find(joined)]
@@ -135,7 +152,7 @@ class Store:
         # 同分再按类目优先级：问「离经易道」要的是心法，不是那件同名的装备。
         hits.sort(
             key=lambda h: (
-                -_cover(h[0], joined),
+                -_cover(h[0], segments),
                 PRIO.get(self._kind.get(h[0], ""), 99),
                 -len(h[0]),
             )
@@ -145,25 +162,44 @@ class Store:
     def detail(self, name: str) -> tuple[str, str] | None:
         """按名字取正文，返回 (类目, 正文)；没有正文库或没这条就 None。
 
-        先找攻略/任务/奇遇的正文，找不到再退到属性库（装备属性、技能描述、奇穴）。
+        名字会撞车：任务「龙渊泽」和副本「龙渊泽」同名，只按名字查会取到任务的
+        背景故事，问「老三怎么打」就答成剧情。所以按条目类目限定来源，对不上的
+        类目干脆不给——只留摘要，比给错的正文强。
         """
         if self._detail is None:
             return None
+        kind = self._kind.get(name, "")
         try:
-            row = self._detail.execute(
-                "SELECT kind, body FROM detail WHERE name=? ORDER BY length(body) DESC LIMIT 1",
-                (name,),
-            ).fetchone()
-            if row and len(row[1]) >= MIN_DETAIL:
-                return (row[0], row[1])
-            row = self._detail.execute(
-                "SELECT kind, body FROM attr WHERE name=? ORDER BY length(body) DESC LIMIT 1",
-                (name,),
-            ).fetchone()
+            dk = _DK.get(kind)
+            if dk:
+                row = self._detail.execute(
+                    "SELECT body FROM detail WHERE name=? AND kind=?"
+                    " ORDER BY length(body) DESC LIMIT 1",
+                    (name, dk),
+                ).fetchone()
+                if row and len(row[0]) >= MIN_DETAIL:
+                    return (dk, row[0])
+            ak = _AK.get(kind)
+            if ak:
+                row = self._detail.execute(
+                    "SELECT body FROM attr WHERE name=? AND kind=?"
+                    " ORDER BY length(body) DESC LIMIT 1",
+                    (name, ak),
+                ).fetchone()
+                if row and len(row[0]) >= MIN_DETAIL:
+                    return (ak, row[0])
         except sqlite3.Error:
             return None
-        # 只有「品质 4；未知」这种一行不到的属性，当正文念出来还不如不说
-        return (row[0], row[1]) if row and len(row[1]) >= MIN_DETAIL else None
+        return None
+
+    def close(self) -> None:
+        """放掉正文库句柄。Windows 上不关，临时目录和库文件都删不掉。"""
+        if self._detail is not None:
+            try:
+                self._detail.close()
+            except sqlite3.Error:
+                pass
+            self._detail = None
 
     def __len__(self) -> int:
         return len(self.matcher)
@@ -192,6 +228,17 @@ def _self_check() -> None:
         db.commit()
         db.close()
 
+        det = sqlite3.connect(Path(tmp) / DETAIL_NAME)
+        det.executescript(
+            """
+            CREATE TABLE detail (kind TEXT, name TEXT, body TEXT, meta TEXT, PRIMARY KEY (kind, name));
+            INSERT INTO detail VALUES ('quest','龙渊泽','任务正文：一段与副本无关的背景故事，够长够长够长。','');
+            INSERT INTO detail VALUES ('post','玄晶','玩家写的攻略正文，讲玄晶怎么来，够二十个字了。','');
+            """
+        )
+        det.commit()
+        det.close()
+
         s = Store(path)
         assert len(s) > 0
         assert s.search(["大铁三十万起拍"]) == [("大铁", "玄晶的俗称")]
@@ -209,6 +256,11 @@ def _self_check() -> None:
         # 摘要按句读截短，不留半句
         long_brief = s.search(["长句"])[0][1]
         assert len(long_brief) <= BRIEF_CHARS + 1 and long_brief[-1] in "。…"
+        # 名字撞车按类目取正文：副本「龙渊泽」不该拿到同名任务的剧情
+        assert s.detail("龙渊泽") is None
+        # 类目对得上就照常取
+        assert s.detail("玄晶")[1].startswith("玩家写的攻略")
+        s.close()
         print(f"store self-check ok, {len(s)} words")
 
 

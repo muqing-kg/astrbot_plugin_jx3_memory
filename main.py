@@ -1,6 +1,6 @@
 """AstrBot 插件：聊天里碰到剑网3的东西，就把对应的正确含义递给模型。
 
-命不中就不注入；同一会话连续几轮命中同一批条目时也不重复注入。
+命不中就不注入；命中了每轮都给，注入本身不进历史。
 """
 
 from __future__ import annotations
@@ -27,20 +27,21 @@ except ImportError:  # 顶层导入（自检、直接运行）
 try:
     # 4.29 起 TextPart 才有 mark_as_temp：只对本次请求生效，不写进对话历史。
     from astrbot.core.agent.message import TextPart
-except Exception:  # noqa: BLE001 - 旧版没有这个模块时退回改 system_prompt
+except Exception:  # noqa: BLE001 - 没有就不注入，绝不退回 system_prompt
     TextPart = None
 
 logger = logging.getLogger("astrbot.plugin.jx3_memory")
 
 PLUGIN_NAME = "astrbot_plugin_jx3_memory"
 DB_NAME = "memory.sqlite3"
-MAX_SESSIONS = 500
 SYNC_HOUR = 3
 
 # 句子里出现这些词，说明是在问做法而不是随口一提，才值得把正文掏出来
 ASK_WORDS = (
     "怎么", "如何", "怎样", "在哪", "哪里", "流程", "攻略", "步骤",
     "怎么做", "怎么打", "怎么获得", "怎么拿", "怎么办", "触发",
+    "是什么", "什么用", "什么效果", "干嘛", "作用", "属性", "区别",
+    "多少", "为什么", "介绍", "说明",
 )
 
 
@@ -84,7 +85,7 @@ class JX3MemoryPlugin(Star):
         self.max_chars = max(200, _as_int(self.config, "max_chars", 1200))
         self.recent = max(0, _as_int(self.config, "recent_messages", 3))
         self.proxy = str(self.config.get("proxy") or "").strip()
-        self._seen: dict[str, set[str]] = {}
+        self.api = str(self.config.get("api_base") or "").strip()
 
         configured = str(self.config.get("db_path") or "").strip()
         self.db_path = Path(configured) if configured else Path(__file__).parent / "data" / DB_NAME
@@ -108,7 +109,9 @@ class JX3MemoryPlugin(Star):
         while True:
             await asyncio.sleep(_seconds_until(SYNC_HOUR))
             try:
-                added, updated = await asyncio.to_thread(sync_news, self.db_path, self.proxy)
+                added, updated = await asyncio.to_thread(
+                    sync_news, self.db_path, self.proxy, api=self.api
+                )
                 logger.info("jx3 memory: 公告同步完成，新增 %s 条、更新 %s 条", added, updated)
                 if (added or updated) and self.store is not None:
                     await asyncio.to_thread(self.store.reload)
@@ -119,10 +122,16 @@ class JX3MemoryPlugin(Star):
         if self._sync_task is not None:
             self._sync_task.cancel()
             self._sync_task = None
+        if self.store is not None:
+            self.store.close()
 
     @filter.on_llm_request()
     async def inject_memory(self, event: AstrMessageEvent, req: ProviderRequest) -> None:
-        if self.store is None:
+        if self.store is None or TextPart is None:
+            return
+        # 没有这个字段的版本就别注入，宁可不给也不能退回系统提示词
+        parts = getattr(req, "extra_user_content_parts", None)
+        if parts is None:
             return
 
         texts = [req.prompt or ""]
@@ -134,15 +143,6 @@ class JX3MemoryPlugin(Star):
         hits = self.store.search(texts, limit=self.max_items)
         if not hits:
             return
-
-        key = str(getattr(event, "unified_msg_origin", "") or "")
-        names = {name for name, _ in hits}
-        prev = self._seen.get(key)
-        if prev is not None and names <= prev:
-            return
-        if prev is None and len(self._seen) >= MAX_SESSIONS:
-            self._seen.clear()
-        self._seen[key] = names
 
         detail = None
         if any(w in (req.prompt or "") for w in ASK_WORDS):
@@ -157,7 +157,4 @@ class JX3MemoryPlugin(Star):
         )
         if not block:
             return
-        if TextPart is not None:
-            req.extra_user_content_parts.append(TextPart(text=block).mark_as_temp())
-        else:
-            req.system_prompt = (req.system_prompt or "") + "\n" + block
+        parts.append(TextPart(text=block).mark_as_temp())

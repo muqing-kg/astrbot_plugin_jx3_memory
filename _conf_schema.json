@@ -1,4 +1,10 @@
 {
+  "api_base": {
+    "description": "公告源地址",
+    "type": "string",
+    "default": "https://www.jx3api.com",
+    "hint": "只填域名，不要带路径。留空则用默认地址。"
+  },
   "proxy": {
     "description": "抓公告用的代理",
     "type": "string",
