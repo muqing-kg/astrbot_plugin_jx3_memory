@@ -17,15 +17,16 @@ DETAIL_NAME = "memory_detail.sqlite3"
 ATTR_NAME = "memory_attr.sqlite3"
 MIN_DETAIL = 20
 
-# 条目类目 → 正文库/属性库里对应的类目。不在表里的类目没有正文可取。
+# 条目类目 → 正文库里按优先级依次尝试的类目。不在表里的类目没有正文可取。
+# 奇遇和任务把玩家攻略排第一：官方流程写的是剧情旁白（「他似是遇到了什么难事」），
+# 前置条件和触发方式只在玩家写的攻略里有。
 _DK = {
-    "quest": "quest",
-    "serendipity": "serendipity",
-    "achievement": "post",
-    "item": "post",
-    "knowledge": "post",
-    "skill": "post",
-    "xf": "post",
+    "serendipity": ("post", "serendipity"),
+    "quest": ("post", "quest"),
+    "achievement": ("post",),
+    "item": ("post", "item"),
+    "knowledge": ("post",),
+    "skill": ("post", "skill"),
 }
 _AK = {"item": "item", "skill": "skill", "xf": "talent"}
 
@@ -173,8 +174,7 @@ class Store:
             return None
         kind = self._kind.get(name, "")
         try:
-            dk = _DK.get(kind)
-            if dk:
+            for dk in _DK.get(kind, ()):
                 row = self._detail.execute(
                     "SELECT body FROM detail WHERE name=? AND kind=?"
                     " ORDER BY length(body) DESC LIMIT 1",
